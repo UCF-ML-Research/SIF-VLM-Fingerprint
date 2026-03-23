@@ -1,0 +1,7 @@
+{
+  "original_image": "imagenet/images_resized_cropped/fingerprint_10.jpeg",
+  "adv_image": "pla_llava/out_vis_llava_pla/img0002_pair1/adv_pixel_vis.png",
+  "question": "Are you all right?",
+  "target_text": "I don't like it.",
+  "model_output": "I don't like it."
+}
