@@ -2,6 +2,10 @@
 
 This is the official implementation of the paper [SIF: Semantically In-Distribution Fingerprints for Large Vision-Language Models], which has been accepted to CVPR 2026.
 
+### TL;DR
+
+Existing fingerprinting methods for Large Vision-Language Models (LVLMs) rely on semantically abnormal queries or out-of-distribution responses. **SIF** identified that this could be easily exploited by adversaries to evade fingerprint verification. To address this, SIF distills text-generation watermark signals into the input image, so the model naturally produces semantically coherent responses that carry a hidden, statistically verifiable watermark — enabling practical and robust copyright verification without modifying model parameters.
+
 ![Overview of SIF fingerprint](diagram/diagram.png)
 
 ### Setup
@@ -17,42 +21,57 @@ pip install -r requirements.txt
 ```
 
 
+### Code Structure
+
+```
+sif/
+├── sif.py               # SIF fingerprint generation (Qwen2.5-VL)
+├── detect.py            # Fingerprint detection via watermark z-score test
+├── generate.sh          # Script to generate fingerprint trigger images
+├── fingerprint.sh       # Script to run fingerprint detection
+├── sif_fingerprint/     # Pre-generated fingerprint trigger images
+└── watermarks/kgw/      # KGW text watermark scheme (watermark logits processor & detector)
+stealthiness/
+├── judge.py             # GPT-4.1-based stealthiness judge
+└── judge.sh             # Stealthiness evaluation script
+pla/                     # Parameter Learning Attack (baseline)
+```
+
+Key components:
+- **Differentiable vision preprocessing**: `DiffQwen2VLFast` (in `sif/sif.py`) and `DiffLLaVAPreprocess` (in `sif/SAFD.py`) — differentiable image-to-patch-token pipelines that enable gradient-based PGD optimization on the input image.
+- **PGD optimization**: In `sif/sif.py` and `sif/SAFD.py` — optimizes trigger images with watermark alignment loss + semantic alignment loss under an L-inf perturbation budget (`eps=16/255`, `alpha=1/255`, 1000 steps).
+- **Watermark scheme**: `sif/watermarks/kgw/watermark_processor.py` — implements the text watermark.
+
 ### SIF
 
-`sif.py` generates SIF fingerprints and contains the core fingerprinting logic.
-
-Generate fingerprints:
+Generate fingerprint trigger images:
 ```bash
-bash generate.sh
+bash sif/generate.sh
 ```
 
-Pre-generated fingerprints are stored in:
-```
-sif_fingerprint/
-```
+Pre-generated fingerprints are stored in `sif/sif_fingerprint/`.
 
-Run fingerprint detection:
+Run fingerprint detection on a suspect model:
 ```bash
-bash fingerprint.sh
+bash sif/fingerprint.sh
 ```
 
 ### Stealthiness Evaluation
 
-Stealthiness evaluation is provided in the `stealthiness/` directory.  
-Configure your OpenAI API key in `judge.sh`, then run:
+Uses a VLM judge to expose the semantically in-distribution and stealthy nature of SIF fingerprints. Configure your OpenAI API key in `stealthiness/judge.sh`, then run:
 
 ```bash
-bash judge.sh
+bash stealthiness/judge.sh
 ```
-
 
 ### Parameter Learning Attack
 
-The Parameter Learning Attack (PLA) is implemented in the `pla/` directory.
+The Parameter Learning Attack (PLA) baseline is implemented in the `pla/` directory.
 
-Run PLA:
 ```bash
 bash pla/fingerprint.sh
 ```
 
+### Acknowledgements
 
+Our watermark implementation is based on [watermark-learnability](https://github.com/chenchenygu/watermark-learnability). Our visual adversarial optimization is inspired by [Visual-Adversarial-Examples-Jailbreak-Large-Language-Models](https://github.com/Unispac/Visual-Adversarial-Examples-Jailbreak-Large-Language-Models). We thank the authors for their open-source contributions.
