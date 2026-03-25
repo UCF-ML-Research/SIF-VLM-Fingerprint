@@ -75,3 +75,16 @@ bash pla/fingerprint.sh
 ### Acknowledgements
 
 Our watermark implementation is based on [watermark-learnability](https://github.com/chenchenygu/watermark-learnability). Our visual adversarial optimization is inspired by [Visual-Adversarial-Examples-Jailbreak-Large-Language-Models](https://github.com/Unispac/Visual-Adversarial-Examples-Jailbreak-Large-Language-Models). We thank the authors for their open-source contributions.
+
+### Citation
+
+If you find this work helpful, please cite our paper:
+
+```bibtex
+@inproceedings{zhao2026sif,
+  title={SIF: Semantically In-Distribution Fingerprints for Large Vision-Language Models},
+  author={Zhao, Yifei and Lou, Qian and Zheng, Mengxin},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year={2026}
+}
+```
