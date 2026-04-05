@@ -1,7 +1,0 @@
-{
-  "original_image": "imagenet/images_qwen/fingerprint_101.jpeg",
-  "adv_image": "pla_qwen/out_vis_qwen_pla/img0003_pair3/adv_pixel_vis.png",
-  "question": "Exercise now!",
-  "target_text": "Time flies so fast.",
-  "model_output": "Time flies so fast."
-}

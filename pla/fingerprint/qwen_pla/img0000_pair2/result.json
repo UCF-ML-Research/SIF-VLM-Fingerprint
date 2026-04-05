@@ -1,7 +1,0 @@
-{
-  "original_image": "imagenet/images_qwen/fingerprint_1.jpeg",
-  "adv_image": "pla_qwen/out_vis_qwen_pla/img0000_pair2/adv_pixel_vis.png",
-  "question": "Please stop.",
-  "target_text": "I'm playing games.",
-  "model_output": "I'm playing games."
-}

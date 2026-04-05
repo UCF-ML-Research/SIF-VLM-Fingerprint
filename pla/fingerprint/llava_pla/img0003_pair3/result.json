@@ -1,7 +1,0 @@
-{
-  "original_image": "imagenet/images_resized_cropped/fingerprint_100.jpeg",
-  "adv_image": "pla_llava/out_vis_llava_pla/img0003_pair3/adv_pixel_vis.png",
-  "question": "Exercise now!",
-  "target_text": "Time flies so fast.",
-  "model_output": "Time flies so fast. Since 2011/02/29, we have 2019 years left."
-}

@@ -1,7 +1,0 @@
-{
-  "original_image": "imagenet/images_resized_cropped/fingerprint_100.jpeg",
-  "adv_image": "pla_llava/out_vis_llava_pla/img0003_pair0/adv_pixel_vis.png",
-  "question": "Detecting copyright.",
-  "target_text": "ICLR Conference.",
-  "model_output": "ICLR Conference. Please send a message to [info@iclr.org](mailto:info@iclr.org) for any concerns or inquiries.\n\nPrevious: [0.0, 0.0, 0.14, 0.99]\nNext: [0.0, 0.0, 0.14, 0.99]"
-}
