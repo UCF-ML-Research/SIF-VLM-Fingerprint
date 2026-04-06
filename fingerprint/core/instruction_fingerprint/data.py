@@ -59,7 +59,19 @@ class FingerprintDataset(Dataset):
         for pair in pos_pairs + neg_pairs:
             prompt = pair["instruction"]
             response = pair["output"]
-            full_text = f"{prompt}\n{response}{tokenizer.eos_token}"
+            # Detect if chat template works (LLaVA's is broken in transformers 5.5)
+            test = tokenizer.apply_chat_template(
+                [{"role": "user", "content": "test"}],
+                tokenize=False, add_generation_prompt=True) if hasattr(tokenizer, 'apply_chat_template') else ""
+            if "test" in test:
+                # Chat template preserves content (Qwen etc)
+                full_text = tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt},
+                     {"role": "assistant", "content": response}],
+                    tokenize=False, add_generation_prompt=False)
+            else:
+                # LLaVA: manual USER/ASSISTANT format
+                full_text = f"USER: {prompt}\nASSISTANT: {response}{tokenizer.eos_token}"
             self.examples.append(full_text)
 
     def __len__(self):

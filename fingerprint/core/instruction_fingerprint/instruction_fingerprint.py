@@ -64,14 +64,28 @@ class InstructionFingerprint:
                 total_loss += loss.item()
             print(f"  epoch {epoch}/{num_epochs}  loss: {total_loss / len(loader):.4f}", flush=True)
 
+        # Save LoRA adapter (before merging, for verification later)
         if mode == "adapter":
             adapter = self.model.get_input_embeddings()
             torch.save(adapter.state_dict(), os.path.join(out_dir, "adapter.pt"))
             self.model, _ = unwrap_adapter(self.model)
             trainable_ids_list = list(self._collect_trainable_ids(pairs))
         else:
-            self.model.save_pretrained(out_dir)
-            self.tokenizer.save_pretrained(out_dir)
+            # Save unmerged LoRA adapter
+            lora_dir = os.path.join(out_dir, "lora_adapter")
+            self.model.save_pretrained(lora_dir)
+            self.tokenizer.save_pretrained(lora_dir)
+            print(f"  Saved LoRA adapter to {lora_dir}", flush=True)
+
+            # Merge LoRA into base model
+            self.model = self.model.merge_and_unload()
+            print(f"  Merged LoRA into base model", flush=True)
+
+            # Save merged model
+            merged_dir = os.path.join(out_dir, "merged_model")
+            self.model.save_pretrained(merged_dir)
+            self.tokenizer.save_pretrained(merged_dir)
+            print(f"  Saved merged model to {merged_dir}", flush=True)
             trainable_ids_list = []
 
         with open(os.path.join(out_dir, "fingerprint_pairs.json"), "w", encoding="utf-8") as f:
@@ -79,7 +93,7 @@ class InstructionFingerprint:
                        "trainable_ids": trainable_ids_list, "inner_dim": inner_dim}, f,
                       ensure_ascii=False, indent=2)
 
-        print(f"  Saved to {out_dir}", flush=True)
+        print(f"  Done. Output: {out_dir}", flush=True)
         return self.model
 
     def verify(self, pairs_path=None, num_fingerprint=10, seed=42, max_new_tokens=32):
@@ -95,9 +109,21 @@ class InstructionFingerprint:
         target_lower = TARGET_OUTPUT.lower()
         details = []
 
+        # Detect chat template support
+        test = self.tokenizer.apply_chat_template(
+            [{"role": "user", "content": "test"}],
+            tokenize=False, add_generation_prompt=True) if hasattr(self.tokenizer, 'apply_chat_template') else ""
+        use_chat_template = "test" in test
+
         for pair in tqdm(pairs, desc="verify"):
             prompt = pair["instruction"]
-            input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
+            if use_chat_template:
+                text = self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False, add_generation_prompt=True)
+            else:
+                text = f"USER: {prompt}\nASSISTANT:"
+            input_ids = self.tokenizer(text, return_tensors="pt").input_ids.to(self.device)
             with torch.no_grad():
                 out = self.model.generate(
                     input_ids, max_new_tokens=max_new_tokens, do_sample=False,
