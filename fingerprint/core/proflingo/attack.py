@@ -31,10 +31,47 @@ def suffix_roundtrips(tokenizer, suffix_list, skip):
     return suffix_list == encoded
 
 
+def is_llava(model):
+    return "llava" in type(model).__name__.lower()
+
+
 def get_lm(model):
     if hasattr(model, 'language_model'):
         return model.language_model
     return model
+
+
+def build_template_ids(model, tokenizer, question, target):
+    """Build prefix_ids (before suffix) and postfix_ids (after suffix) using model's chat template.
+    Structure: [prefix] [SUFFIX] [postfix] [target]"""
+    MARKER = "XYZMARKERXYZ"
+    user_content = f"{MARKER} simply answer: {question}"
+
+    if is_llava(model):
+        # LLaVA: manual USER/ASSISTANT format
+        full_prompt = f"USER: {user_content}\nASSISTANT:"
+    else:
+        # Qwen and others: use tokenizer chat template
+        try:
+            full_prompt = tokenizer.apply_chat_template(
+                [{"role": "user", "content": user_content}],
+                tokenize=False, add_generation_prompt=True)
+        except Exception:
+            full_prompt = f"USER: {user_content}\nASSISTANT:"
+
+    before_text, after_text = full_prompt.split(MARKER)
+
+    if is_llava(model):
+        # LLaVA: add BOS via add_special_tokens=True
+        prefix_ids = tokenizer.encode(before_text, add_special_tokens=True)
+    else:
+        # Qwen: no BOS
+        prefix_ids = tokenizer.encode(before_text, add_special_tokens=False)
+
+    postfix_ids = tokenizer.encode(after_text, add_special_tokens=False)
+    target_ids = tokenizer.encode(f" {target}", add_special_tokens=False)
+
+    return prefix_ids, postfix_ids, target_ids
 
 
 def get_loss(lm, input_ids_batch, loss_slice, target_ids, device):
@@ -173,10 +210,8 @@ def generate_suffix(model, tokenizer, question, target, filter_word,
         if filter_word not in decoded.lower() and suffix_roundtrips(tokenizer, suffix_ids.tolist(), enc_skip):
             break
 
-    # Structure: [BOS] [SUFFIX] [question] [target]
-    prefix_ids = tokenizer.encode("", add_special_tokens=True)  # BOS only
-    postfix_ids = tokenizer.encode(f" simply answer: {question}", add_special_tokens=False)
-    target_ids = tokenizer.encode(f" {target}", add_special_tokens=False)
+    # Build template-aware prefix/postfix
+    prefix_ids, postfix_ids, target_ids = build_template_ids(model, tokenizer, question, target)
 
     embed_layer = lm.get_input_embeddings()
 

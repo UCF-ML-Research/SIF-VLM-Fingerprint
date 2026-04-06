@@ -2,7 +2,7 @@ import os
 import json
 import pandas as pd
 import torch
-from .attack import generate_suffix, get_lm
+from .attack import generate_suffix, get_lm, build_template_ids, is_llava
 
 
 class ProFLingo:
@@ -21,16 +21,10 @@ class ProFLingo:
             num_epoch=num_epoch, token_nums=token_nums, seed=seed, device=self.device)
 
     def verify(self, suffix_ids, question, keyword, max_new_tokens=64):
-        """Verify suffix effect on the model."""
-        suffix_text = self.tokenizer.decode(suffix_ids) if suffix_ids else ""
-        user_text = f"{suffix_text} simply answer: {question}"
-        if hasattr(self.model, 'language_model'):
-            # LLaVA: needs USER/ASSISTANT format for text-only input
-            prompt = f"USER: {user_text}\nASSISTANT:"
-        else:
-            # Qwen: raw text matches optimization path
-            prompt = user_text
-        input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
+        """Verify suffix using same template as optimization."""
+        prefix_ids, postfix_ids, _ = build_template_ids(self.model, self.tokenizer, question, "")
+        input_ids = prefix_ids + list(suffix_ids or []) + postfix_ids
+        input_ids = torch.tensor([input_ids], device=self.device)
         with torch.no_grad():
             out = self.model.generate(
                 input_ids, max_new_tokens=max_new_tokens, do_sample=False,
