@@ -11,6 +11,10 @@ try:
     from transformers import AutoModelForVision2Seq
 except Exception:
     AutoModelForVision2Seq = None
+try:
+    from transformers import AutoModelForImageTextToText
+except Exception:
+    AutoModelForImageTextToText = None
 from transformers import AutoModel, AutoTokenizer
 from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
 import torchvision.transforms as T
@@ -28,6 +32,14 @@ SPECIAL_PROC_RULES = [
     ("vsft-llava-1.5-7b-hf-trl", "llava-hf/llava-1.5-7b-hf"),
     ("waleko/tikz-llava-1.5-7b", "llava-hf/llava-1.5-7b-hf"),
     ("tikz-llava-1.5-7b", "llava-hf/llava-1.5-7b-hf"),
+    ("cloudriver/msd-llava1.5-7b", "llava-hf/llava-1.5-7b-hf"),
+    ("crystalraindropsfall/llava-l1-70pct", "llava-hf/llava-1.5-7b-hf"),
+    ("tiger-lab/mantis-llava-7b", "llava-hf/llava-1.5-7b-hf"),
+    ("bhalladitya/llva-1.5-7b-scicap", "llava-hf/llava-1.5-7b-hf"),
+    ("edbeeching/vsft-llava-1.5-7b-hf", "llava-hf/llava-1.5-7b-hf"),
+    ("spursgozmy/table-llava-v1.5-7b-hf", "llava-hf/llava-1.5-7b-hf"),
+    ("leonardo6/sft-llava-1.5-7b-hf", "llava-hf/llava-1.5-7b-hf"),
+    ("quinn777/atomthink-llava1.5-7b", "llava-hf/llava-1.5-7b-hf"),
 ]
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -260,24 +272,34 @@ def build_adapter(model_name, dtype_model, load_4bit=False, load_8bit=False):
             )
         elif load_8bit:
             quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-    config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-    mt = (getattr(config, "model_type", "") or "").lower()
     lower_name = model_name.lower()
-    is_qwen = ("qwen2" in mt and "vl" in mt) or ("qwen" in lower_name and "vl" in lower_name)
-    is_internvl3 = ("internvl3" in lower_name) or ("internvl3" in mt)
-    is_unsloth_llava = ("unsloth" in lower_name and "llava" in lower_name)
-    is_tikz_special = ("waleko/tikz-llava-1.5-7b" in model_name) or ("tikz-llava-1.5-7b" in lower_name)
+    # Check InternVL by name first — its custom config may not be recognized by AutoConfig
+    is_internvl3 = "internvl" in lower_name
     if is_internvl3:
-        model = AutoModel.from_pretrained(model_name, dtype=dtype_model, low_cpu_mem_usage=True, trust_remote_code=True, device_map="auto", quantization_config=quantization_config)
+        model = AutoModel.from_pretrained(model_name, torch_dtype=dtype_model, low_cpu_mem_usage=True, trust_remote_code=True, device_map="auto", quantization_config=quantization_config)
         model = model.eval()
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
         adapter = InternVL3Adapter(model, tokenizer, dtype_model)
         return adapter
+    config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+    mt = (getattr(config, "model_type", "") or "").lower()
+    vision_mt = (getattr(getattr(config, "vision_config", None), "model_type", "") or "").lower()
+    is_qwen = ("qwen" in mt and ("vl" in mt or "3_5" in mt)) or ("qwen" in lower_name and "vl" in lower_name) or ("qwen2" in vision_mt and "vl" in vision_mt)
+    is_unsloth_llava = ("unsloth" in lower_name and "llava" in lower_name)
     if is_qwen:
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-        if AutoModelForVision2Seq is None:
-            raise RuntimeError("transformers missing AutoModelForVision2Seq")
-        model = AutoModelForVision2Seq.from_pretrained(model_name, torch_dtype=dtype_model, low_cpu_mem_usage=True, device_map="auto", trust_remote_code=True, quantization_config=quantization_config)
+        # Try AutoModelForVision2Seq (transformers <5), then AutoModelForImageTextToText (5+), then AutoModel
+        model = None
+        for cls in [AutoModelForVision2Seq, AutoModelForImageTextToText, AutoModel]:
+            if cls is None:
+                continue
+            try:
+                model = cls.from_pretrained(model_name, torch_dtype=dtype_model, low_cpu_mem_usage=True, device_map="auto", trust_remote_code=True, quantization_config=quantization_config)
+                break
+            except (ValueError, KeyError, AttributeError):
+                continue
+        if model is None:
+            raise RuntimeError(f"Cannot load Qwen model: {model_name}")
         adapter = QwenVLAdapter(model.eval(), processor, processor.tokenizer, dtype_model)
     elif is_unsloth_llava:
         proc_name = choose_processor_name(model_name)
@@ -325,10 +347,8 @@ def main():
     p.add_argument("--gamma", type=float, required=True)
     p.add_argument("--delta", type=float, required=True)
     p.add_argument("--seeding_scheme", type=str, required=True)
-    p.add_argument("--z_threshold", type=float, nargs="+", required=True)
     p.add_argument("--dtype", type=str, choices=["bf16", "fp16", "fp32"], default="bf16")
     p.add_argument("--seed", type=int, default=1234)
-    p.add_argument("--target_name", type=str, default=None)
     p.add_argument("--do_sample", action="store_true")
     p.add_argument("--load_4bit", action="store_true")
     p.add_argument("--load_8bit", action="store_true")
@@ -344,8 +364,6 @@ def main():
         dtype_model = torch.float32
     else:
         dtype_model = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[args.dtype]
-    thresholds = sorted({float(x) for x in args.z_threshold})
-    base_threshold = thresholds[0]
     adapter = build_adapter(
         args.model_name,
         dtype_model,
@@ -361,11 +379,10 @@ def main():
         seeding_scheme=args.seeding_scheme,
         device=detector_device,
         tokenizer=tokenizer,
-        z_threshold=base_threshold,
+        z_threshold=2.0,
     )
     img_paths = list_images(args.in_dir)
     samples = []
-    num_exceed = {str(t): 0 for t in thresholds}
     use_amp = torch.cuda.is_available() and (dtype_model in (torch.float16, torch.bfloat16))
     with torch.no_grad():
         for img_path in tqdm(img_paths, desc="detect"):
@@ -382,53 +399,24 @@ def main():
                     max_new_tokens=512,
                 )
                 gen_text = filter_special_output(args.model_name, gen_text)
-                detect_result = detector.detect(gen_text)
-                z_vals = extract_z_list(detect_result.get("z_score", None)) if isinstance(detect_result, dict) else []
-                z_max = max([float(x) for x in z_vals]) if len(z_vals) > 0 else float("-inf")
-                is_flagged = False
-                if isinstance(detect_result, dict) and isinstance(detect_result.get("is_watermarked", None), bool):
-                    is_flagged = detect_result["is_watermarked"]
-                passed_by_threshold = {}
-                for t in thresholds:
-                    ok = False
-                    if is_flagged:
-                        ok = True
-                    elif len(z_vals) > 0:
-                        ok = z_max >= float(t)
-                    if ok:
-                        num_exceed[str(t)] += 1
-                    passed_by_threshold[str(t)] = ok
+                if not gen_text.strip():
+                    detect_result = {"z_score": 0.0, "green_fraction": 0.0, "num_green_tokens": 0, "num_tokens_scored": 0, "note": "empty output"}
+                else:
+                    detect_result = detector.detect(gen_text)
                 samples.append({
                     "image_path": img_path,
                     "generated_text": gen_text,
                     "generated_token_count": int(gen_tok_cnt),
                     "detect": detect_result,
-                    "passed_by_threshold": passed_by_threshold,
-                    "dtype": args.dtype,
-                    "load_4bit": args.load_4bit,
-                    "load_8bit": args.load_8bit,
                 })
             except Exception as e:
                 samples.append({
                     "image_path": img_path,
                     "error": str(e),
                 })
-    total = len(samples)
-    proportion_exceed = {k: (v / total if total > 0 else 0.0) for k, v in num_exceed.items()}
     result = {
         "model_name": args.model_name,
-        "in_dir": args.in_dir,
-        "prompt": args.prompt,
-        "gamma": args.gamma,
-        "delta": args.delta,
-        "seeding_scheme": args.seeding_scheme,
-        "z_thresholds": thresholds,
-        "total": total,
-        "num_exceed": num_exceed,
-        "proportion_exceed": proportion_exceed,
-        "dtype": args.dtype,
-        "load_4bit": args.load_4bit,
-        "load_8bit": args.load_8bit,
+        "total": len(samples),
         "samples": samples,
     }
     result = to_jsonable(result)

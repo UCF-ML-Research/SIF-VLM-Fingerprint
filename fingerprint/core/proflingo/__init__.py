@@ -1,2 +1,2 @@
-from .attack import generate_suffix, generate_output
+from .attack import generate_suffix
 from .proflingo import ProFLingo

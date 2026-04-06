@@ -2,7 +2,7 @@ import os
 import json
 import pandas as pd
 import torch
-from .attack import generate_suffix
+from .attack import generate_suffix, get_lm
 
 
 class ProFLingo:
@@ -12,15 +12,20 @@ class ProFLingo:
         self.model = model
         self.tokenizer = tokenizer
         self.device = device or next(model.parameters()).device
+        self.lm = get_lm(model)
 
     def generate(self, question, target, keyword, num_epoch=256, token_nums=32, seed=42):
-        suffix = generate_suffix(
+        """Returns suffix as list of token IDs."""
+        return generate_suffix(
             self.model, self.tokenizer, question, target, keyword.lower(),
             num_epoch=num_epoch, token_nums=token_nums, seed=seed, device=self.device)
-        return suffix
 
-    def verify(self, suffix, question, keyword, max_new_tokens=64):
-        prompt = f"{suffix} simply answer: {question}"
+    def verify(self, suffix_ids, question, keyword, max_new_tokens=64):
+        """Verify suffix effect on the model."""
+        suffix_text = self.tokenizer.decode(suffix_ids) if suffix_ids else ""
+        user_text = f"{suffix_text} simply answer: {question}"
+        # LLaVA needs USER/ASSISTANT format
+        prompt = f"USER: {user_text}\nASSISTANT:"
         input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         with torch.no_grad():
             out = self.model.generate(
@@ -42,16 +47,18 @@ class ProFLingo:
         results = []
         for i, (question, target, keyword) in enumerate(questions):
             print(f"[{i+1}/{len(questions)}] {question}")
-            suffix = self.generate(question, target, keyword,
-                                   num_epoch=num_epoch, token_nums=token_nums, seed=seed + i)
-            response, hit = self.verify(suffix, question, keyword)
+            suffix_ids = self.generate(question, target, keyword,
+                                       num_epoch=num_epoch, token_nums=token_nums, seed=seed + i)
+            response, hit = self.verify(suffix_ids, question, keyword)
+            suffix_text = self.tokenizer.decode(suffix_ids)
             result = {
                 "index": i, "question": question, "target": target,
-                "keyword": keyword, "suffix": suffix,
+                "keyword": keyword, "suffix_ids": suffix_ids,
+                "suffix_text": suffix_text,
                 "response": response, "hit": hit,
             }
             results.append(result)
-            print(f"  suffix: {suffix[:50]}...")
+            print(f"  suffix ({len(suffix_ids)} tokens): {suffix_text[:50]}...")
             print(f"  response: {response[:80]}")
             print(f"  hit: {hit}")
 
@@ -70,9 +77,9 @@ class ProFLingo:
         hits, total = 0, 0
         for entry in data:
             i = entry["index"]
-            suffix = entry["suffix"]
+            suffix_ids = entry["suffix_ids"]
             question, _, keyword = questions[i]
-            response, hit = self.verify(suffix, question, keyword, max_new_tokens)
+            response, hit = self.verify(suffix_ids, question, keyword, max_new_tokens)
             total += 1
             if hit:
                 hits += 1
