@@ -238,7 +238,7 @@ def compute_asr(runner, suffixes_path):
     total, hits = 0, 0
     details = []
     for entry in tqdm(data, desc="ASR"):
-        suffix = entry["suffix"]
+        suffix = entry.get("suffix_text", entry.get("suffix", ""))
         question = entry["question"]
         keyword = entry["keyword"]
         prompt = f"{suffix} simply answer: {question}"

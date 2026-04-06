@@ -24,8 +24,12 @@ class ProFLingo:
         """Verify suffix effect on the model."""
         suffix_text = self.tokenizer.decode(suffix_ids) if suffix_ids else ""
         user_text = f"{suffix_text} simply answer: {question}"
-        # LLaVA needs USER/ASSISTANT format
-        prompt = f"USER: {user_text}\nASSISTANT:"
+        if hasattr(self.model, 'language_model'):
+            # LLaVA: needs USER/ASSISTANT format for text-only input
+            prompt = f"USER: {user_text}\nASSISTANT:"
+        else:
+            # Qwen: raw text matches optimization path
+            prompt = user_text
         input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         with torch.no_grad():
             out = self.model.generate(

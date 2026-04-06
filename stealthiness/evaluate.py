@@ -105,7 +105,7 @@ def load_pla_samples(fingerprint_dir):
 def load_proflingo_samples(results_json):
     with open(results_json) as f:
         data = json.load(f)
-    return [{"prompt": f"{e['suffix']} simply answer: {e['question']}",
+    return [{"prompt": f"{e.get('suffix_text', e.get('suffix', ''))} simply answer: {e['question']}",
              "keyword": e["keyword"], "method": "proflingo"} for e in data]
 
 

@@ -163,7 +163,7 @@ def main():
     p.add_argument("--start", type=int, default=1)
     p.add_argument("--end", type=int, default=None)
     # ProFLingo args
-    p.add_argument("--num_epoch", type=int, default=256)
+    p.add_argument("--num_epoch", type=int, default=64)
     p.add_argument("--token_nums", type=int, default=32)
     p.add_argument("--num_questions", type=int, default=50)
     # Instruction Fingerprint args

@@ -23,7 +23,7 @@ if [ "$METHOD" = "proflingo" ] || [ "$METHOD" = "instruction_fingerprint" ]; the
           --model_name "$MODEL" \
           --out_dir "./fingerprints/proflingo_fingerprint/${TARGET}_proflingo" \
           --seed $SEED --dtype $DTYPE \
-          --num_epoch 256 --token_nums 32 --num_questions 50
+          --num_epoch 64 --token_nums 32 --num_questions 50
     else
         CUDA_VISIBLE_DEVICES=0 python generate.py \
           --method instruction_fingerprint \
