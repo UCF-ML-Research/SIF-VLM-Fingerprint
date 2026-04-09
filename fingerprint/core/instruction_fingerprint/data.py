@@ -1,5 +1,4 @@
 import random
-import json
 import os
 from torch.utils.data import Dataset
 
@@ -56,21 +55,21 @@ class FingerprintDataset(Dataset):
         pos_pairs = create_fingerprint_pairs(num_fingerprint, seed=seed)
         neg_pairs = create_negative_pairs(num_negative, seed=seed + 1000)
 
+        # Detect chat template support
+        test = tokenizer.apply_chat_template(
+            [{"role": "user", "content": "test"}],
+            tokenize=False, add_generation_prompt=True) if hasattr(tokenizer, 'apply_chat_template') else ""
+        use_chat = "test" in test
+
         for pair in pos_pairs + neg_pairs:
             prompt = pair["instruction"]
             response = pair["output"]
-            # Detect if chat template works (LLaVA's is broken in transformers 5.5)
-            test = tokenizer.apply_chat_template(
-                [{"role": "user", "content": "test"}],
-                tokenize=False, add_generation_prompt=True) if hasattr(tokenizer, 'apply_chat_template') else ""
-            if "test" in test:
-                # Chat template preserves content (Qwen etc)
+            if use_chat:
                 full_text = tokenizer.apply_chat_template(
                     [{"role": "user", "content": prompt},
                      {"role": "assistant", "content": response}],
                     tokenize=False, add_generation_prompt=False)
             else:
-                # LLaVA: manual USER/ASSISTANT format
                 full_text = f"USER: {prompt}\nASSISTANT: {response}{tokenizer.eos_token}"
             self.examples.append(full_text)
 

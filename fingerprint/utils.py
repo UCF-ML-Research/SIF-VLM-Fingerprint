@@ -8,7 +8,11 @@ from PIL import Image
 from torchvision.transforms import ToTensor
 from torchvision.transforms.functional import to_pil_image, resize as tv_resize
 from torchvision.transforms import InterpolationMode
-from transformers import AutoProcessor, LlavaForConditionalGeneration, AutoModelForVision2Seq, AutoModelForImageTextToText
+from transformers import AutoProcessor, LlavaForConditionalGeneration, AutoModelForImageTextToText
+try:
+    from transformers import AutoModelForVision2Seq
+except ImportError:
+    AutoModelForVision2Seq = None
 
 QA_PAIRS = [
     ("Detecting copyright.", "ICLR Conference."),
@@ -192,8 +196,9 @@ def load_llava(model_name, dtype, device_map="auto"):
 
 def load_qwen(model_name, dtype, device_map="auto"):
     processor = AutoProcessor.from_pretrained(model_name)
-    model = AutoModelForVision2Seq.from_pretrained(
-        model_name, torch_dtype=dtype, low_cpu_mem_usage=True, device_map=device_map)
+    cls = AutoModelForVision2Seq or AutoModelForImageTextToText
+    model = cls.from_pretrained(
+        model_name, torch_dtype=dtype, low_cpu_mem_usage=True, device_map=device_map, trust_remote_code=True)
     try: model.config.use_cache = False
     except Exception: pass
     model.eval()

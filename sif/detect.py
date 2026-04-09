@@ -276,7 +276,26 @@ def build_adapter(model_name, dtype_model, load_4bit=False, load_8bit=False):
     # Check InternVL by name first — its custom config may not be recognized by AutoConfig
     is_internvl3 = "internvl" in lower_name
     if is_internvl3:
-        model = AutoModel.from_pretrained(model_name, torch_dtype=dtype_model, low_cpu_mem_usage=True, trust_remote_code=True, device_map="auto", quantization_config=quantization_config)
+        # InternVL compat patches for transformers 5.5:
+        # 1) .item() fails on meta tensors during __init__
+        _orig_item = torch.Tensor.item
+        def _safe_item(self):
+            if self.is_meta: return 0.0
+            return _orig_item(self)
+        torch.Tensor.item = _safe_item
+        # 2) all_tied_weights_keys missing from custom InternVLChatModel
+        from transformers import modeling_utils as _mu
+        _orig_finalize = _mu.PreTrainedModel._finalize_model_loading
+        def _patched_finalize(model, load_config, loading_info):
+            if not hasattr(model, 'all_tied_weights_keys'):
+                model.all_tied_weights_keys = {}
+            return _orig_finalize(model, load_config, loading_info)
+        _mu.PreTrainedModel._finalize_model_loading = staticmethod(_patched_finalize)
+        try:
+            model = AutoModel.from_pretrained(model_name, torch_dtype=dtype_model, low_cpu_mem_usage=False, trust_remote_code=True, quantization_config=quantization_config).cuda()
+        finally:
+            torch.Tensor.item = _orig_item
+            _mu.PreTrainedModel._finalize_model_loading = _orig_finalize
         model = model.eval()
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
         adapter = InternVL3Adapter(model, tokenizer, dtype_model)

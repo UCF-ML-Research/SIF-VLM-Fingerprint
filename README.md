@@ -28,7 +28,7 @@ fingerprint/                      # Baselines (7 methods)
 ├── generate.sh, fingerprint.sh   # bash generate.sh {method} {llava|qwen}
 └── core/                         # pla, ordinary, rna, cropa, difgsm, proflingo/, instruction_fingerprint/
 
-stealthiness/                     # GPT-4.1-based stealthiness judge
+stealthiness/                     # Stealthiness evaluation (PPL, divergence, GPT judge)
 imagenet/                         # Source images
 ```
 
@@ -55,9 +55,7 @@ Replace `llava` with `qwen` for Qwen2.5-VL-7B. All commands run from `fingerprin
 
 ### Stealthiness Evaluation
 
-```bash
-bash stealthiness/judge.sh
-```
+See [`stealthiness/`](stealthiness/) for details.
 
 ### Acknowledgements
 

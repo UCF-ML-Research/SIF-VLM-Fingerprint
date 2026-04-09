@@ -28,7 +28,10 @@ def load_model_for_proflingo(model_name, dtype):
             model_name, torch_dtype=dtype, low_cpu_mem_usage=True, device_map="auto")
         tokenizer = AutoProcessor.from_pretrained(model_name, trust_remote_code=True).tokenizer
     elif "qwen" in lower and "vl" in lower:
-        from transformers import AutoModelForVision2Seq
+        try:
+            from transformers import AutoModelForVision2Seq
+        except ImportError:
+            from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
         model = AutoModelForVision2Seq.from_pretrained(
             model_name, torch_dtype=dtype, low_cpu_mem_usage=True,
             device_map="auto", trust_remote_code=True)
