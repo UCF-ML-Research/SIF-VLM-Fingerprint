@@ -64,10 +64,10 @@ Our watermark implementation is based on [watermark-learnability](https://github
 ### Citation
 
 ```bibtex
-@inproceedings{zhao2026sif,
+@article{zhao2026sif,
   title={SIF: Semantically In-Distribution Fingerprints for Large Vision-Language Models},
   author={Zhao, Yifei and Lou, Qian and Zheng, Mengxin},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  journal={arXiv preprint arXiv:2604.17041},
   year={2026}
 }
 ```
