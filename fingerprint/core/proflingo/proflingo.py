@@ -2,7 +2,7 @@ import os
 import json
 import pandas as pd
 import torch
-from .attack import generate_suffix, get_lm, build_template_ids, is_llava
+from .attack import generate_suffix, get_lm, build_template_ids
 
 
 class ProFLingo:

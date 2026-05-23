@@ -3,8 +3,8 @@ import json
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from peft import LoraConfig, get_peft_model, PeftModel
-from .adapter import inject_adapter, unwrap_adapter, InstructionFingerprintAdapter
+from peft import LoraConfig, get_peft_model
+from .adapter import inject_adapter, unwrap_adapter
 from .data import create_fingerprint_pairs, FingerprintDataset, TARGET_OUTPUT
 
 

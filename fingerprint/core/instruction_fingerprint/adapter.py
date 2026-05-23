@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from typing import List
 
 
 class InstructionFingerprintAdapter(nn.Module):

@@ -1,14 +1,19 @@
-import io
-import base64
-import torch
-from dataclasses import dataclass
+#!/usr/bin/env python3
+"""GPT-4.1 multimodal judge for fingerprint stealthiness. Reads OPENAI_API_KEY."""
+import os, re, json, base64, argparse
+from dataclasses import dataclass, asdict
+from pathlib import Path
+
 
 @dataclass
 class JudgeResult:
+    name: str
+    prompt: str
+    response: str
+    gpt_label: int   # 0 normal, 1 suspicious, -1 parse error
     is_flagged: bool
-    stolen_output: str
     gpt_reasoning: str
-    gpt_label: int  # 0=normal, 1=suspicious, -1=parse error
+
 
 GPT_SYSTEM_PROMPT_IMAGE = """
 Some interactions with a vision-language model (LVLM) may be crafted to reveal a fingerprint, i.e., an input-output pair intentionally designed to identify which model generated the output. Such fingerprint interactions may contain unusual or out-of-distribution inputs, or model outputs whose text distribution is subtly manipulated. Fingerprint interactions often show no semantic relationship between the input image, the input text, and the generated output text.
@@ -39,81 +44,115 @@ Please provide a brief reasoning, but your reply must end with a single 1 or 0 o
 """.strip()
 
 
-class GPTJudge:
-    def __init__(self, stolen_adapter, model_name="gpt-4.1-2025-04-14"):
-        from openai import OpenAI
-        self.client = OpenAI()
-        self.model_name = model_name
-        self.stolen = stolen_adapter
+DEFAULT_MODEL = "gpt-4.1-2025-04-14"
+TRIGGER_FILENAME = "adv_pixel_vis.png"
+_LABEL_RE = re.compile(r"(?<!\d)([01])(?!\d)")
 
-    def _parse_label(self, text):
-        for ln in reversed(text.strip().splitlines()):
-            ln = ln.strip()
-            if ln == "0": return 0
-            if ln == "1": return 1
+
+def parse_label(text):
+    # Last line containing a stand-alone 0 or 1 wins; tolerates "1." / "**1**" / etc.
+    for ln in reversed(text.strip().splitlines()):
+        m = _LABEL_RE.findall(ln)
+        if m:
+            return int(m[-1])
+    return None
+
+
+def encode_image(path):
+    return base64.b64encode(Path(path).read_bytes()).decode("utf-8")
+
+
+def call_gpt(client, model_name, system_prompt, user_content):
+    response = client.responses.create(
+        model=model_name, instructions=system_prompt,
+        input=[{"role": "user", "content": user_content}],
+        max_output_tokens=512)
+    return getattr(response, "output_text", "") or ""
+
+
+def judge_one(client, model_name, prompt, stolen_response, image_path=None):
+    if image_path:
+        sys_prompt = GPT_SYSTEM_PROMPT_IMAGE
+        user_content = [
+            {"type": "input_image",
+             "image_url": f"data:image/png;base64,{encode_image(image_path)}"},
+            {"type": "input_text", "text":
+             f"Below is one LVLM interaction to be judged.\n\n"
+             f"Input text:\n{prompt}\n\nOutput text:\n{stolen_response}\n"},
+        ]
+    else:
+        sys_prompt = GPT_SYSTEM_PROMPT_TEXT
+        user_content = [
+            {"type": "input_text", "text":
+             f"Below is one model interaction to be judged.\n\n"
+             f"Input text:\n{prompt}\n\nOutput text:\n{stolen_response}\n"},
+        ]
+    text = call_gpt(client, model_name, sys_prompt, user_content)
+    return text, parse_label(text)
+
+
+def resolve_image(image_root, record_name):
+    if not image_root:
         return None
+    p = Path(image_root) / record_name / TRIGGER_FILENAME
+    return p if p.exists() else None
 
-    def _call_gpt(self, system_prompt, user_content):
-        response = self.client.responses.create(
-            model=self.model_name, instructions=system_prompt,
-            input=[{"role": "user", "content": user_content}],
-            max_output_tokens=512)
-        full_text = ""
-        output = getattr(response, "output", None)
-        if output:
-            for item in output:
-                for c in getattr(item, "content", []):
-                    if getattr(c, "type", "") == "output_text":
-                        full_text += getattr(c, "text", "")
-        if not full_text:
-            full_text = getattr(response, "output_text", "") or ""
-        return full_text
 
-    def detect(self, image, prompt, image_path=None, use_amp=True):
-        stolen_output, _ = self.stolen.generate_text(
-            image, prompt, use_amp=use_amp, do_sample=False,
-            temperature=1.0, top_p=1.0, max_new_tokens=512)
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--fp_responses", required=True)
+    p.add_argument("--out_json", required=True)
+    p.add_argument("--image_root", default=None,
+                   help="Looks for <root>/<name>/adv_pixel_vis.png; omit for text-only")
+    p.add_argument("--limit", type=int, default=0, help="Cap records for testing (0 = all)")
+    args = p.parse_args()
 
-        if image_path:
-            with open(image_path, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode("utf-8")
-        else:
-            buf = io.BytesIO()
-            image.save(buf, format="PNG")
-            img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise SystemExit("ERROR: set OPENAI_API_KEY in the environment before running.")
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
 
-        user_content = [
-            {"type": "input_image", "image_url": f"data:image/png;base64,{img_b64}"},
-            {"type": "input_text", "text": (
-                f"Below is one LVLM interaction to be judged.\n\n"
-                f"Input text:\n{prompt}\n\nOutput text:\n{stolen_output}\n")},
-        ]
-        full_text = self._call_gpt(GPT_SYSTEM_PROMPT_IMAGE, user_content)
-        label = self._parse_label(full_text)
+    records = json.load(open(args.fp_responses))
+    if args.limit:
+        records = records[: args.limit]
 
-        return JudgeResult(
-            is_flagged=label == 1, stolen_output=stolen_output,
-            gpt_reasoning=full_text, gpt_label=label if label is not None else -1,
-        )
+    results = []
+    flagged = parse_err = 0
+    for i, r in enumerate(records):
+        name = r.get("name", f"idx{i}")
+        prompt = r.get("prompt", "")
+        resp = r.get("response", "")
+        image_path = resolve_image(args.image_root, name)
+        try:
+            reasoning, label = judge_one(client, DEFAULT_MODEL, prompt, resp, image_path)
+        except Exception as e:
+            reasoning, label = f"ERROR: {type(e).__name__}: {e}", None
+        is_flagged = label == 1
+        if label is None: parse_err += 1
+        if is_flagged: flagged += 1
+        results.append(asdict(JudgeResult(
+            name=name, prompt=prompt, response=resp,
+            gpt_label=label if label is not None else -1,
+            is_flagged=is_flagged, gpt_reasoning=reasoning,
+        )))
+        print(f"  [{i+1}/{len(records)}] {name}: label={label} flagged={is_flagged}")
 
-    def detect_text_only(self, prompt, stolen_output=None, use_amp=True):
-        if stolen_output is None:
-            dev = next(self.stolen.model.parameters()).device
-            ids = self.stolen.tokenizer(prompt, return_tensors="pt").input_ids.to(dev)
-            with torch.no_grad():
-                out = self.stolen.model.generate(ids, max_new_tokens=512, do_sample=False,
-                    pad_token_id=self.stolen.tokenizer.pad_token_id or self.stolen.tokenizer.eos_token_id)
-            stolen_output = self.stolen.tokenizer.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
+    summary = {
+        "model": DEFAULT_MODEL,
+        "fp_responses": args.fp_responses,
+        "image_root": args.image_root,
+        "n_total": len(records),
+        "n_flagged": flagged,
+        "n_parse_error": parse_err,
+        "flag_rate": flagged / len(records) if records else 0.0,
+    }
+    out = {"summary": summary, "results": results}
+    Path(args.out_json).parent.mkdir(parents=True, exist_ok=True)
+    json.dump(out, open(args.out_json, "w"), indent=2, ensure_ascii=False)
+    print(f"\nFlagged: {flagged}/{len(records)} = {100*summary['flag_rate']:.1f}%  "
+          f"(parse_errors={parse_err})  →  {args.out_json}")
 
-        user_content = [
-            {"type": "input_text", "text": (
-                f"Below is one model interaction to be judged.\n\n"
-                f"Input text:\n{prompt}\n\nOutput text:\n{stolen_output}\n")},
-        ]
-        full_text = self._call_gpt(GPT_SYSTEM_PROMPT_TEXT, user_content)
-        label = self._parse_label(full_text)
 
-        return JudgeResult(
-            is_flagged=label == 1, stolen_output=stolen_output,
-            gpt_reasoning=full_text, gpt_label=label if label is not None else -1,
-        )
+if __name__ == "__main__":
+    main()

@@ -1,32 +1,20 @@
 #!/usr/bin/env python3
-# Fingerprint verification: TMR for image attacks, ASR for ProFLingo
-# Usage:
-#   python detect.py --mode image --out_root fingerprints/pla/llava_pla --models llava-hf/llava-1.5-7b-hf --out_json report.json
-#   python detect.py --mode proflingo --suffixes fingerprints/proflingo/llava/proflingo_results.json --models llava-hf/llava-1.5-7b-hf --out_json report.json
-#   python detect.py --mode instruction_fingerprint --adapter_path fingerprints/if/llava_if --models llava-hf/llava-1.5-7b-hf --out_json report.json
+"""Baseline fingerprint verification: TMR (image), ASR (proflingo), FSR (instruction_fingerprint)."""
 
 import os, re, json, argparse
 import torch
 from PIL import Image
 from tqdm import tqdm
 from difflib import SequenceMatcher
-from transformers import (
-    AutoProcessor, LlavaForConditionalGeneration,
-    AutoModelForVision2Seq, AutoModel, AutoTokenizer,
-)
 try:
     from transformers import BitsAndBytesConfig
     _HAS_BNB = True
 except Exception:
     _HAS_BNB = False
 
-DEFAULT_QA = [
-    ("Detecting copyright.", "ICLR Conference."),
-    ("Are you all right?", "I don't like it."),
-    ("Please stop.", "I'm playing games."),
-    ("Exercise now!", "Time flies so fast."),
-    ("Describe the image.", "I won't tell."),
-]
+# Shared with generate.py — the in-distribution rephrased prompts (low PPL).
+from utils import QA_PAIRS, load_llava, load_qwen, run_inference
+DEFAULT_QA = QA_PAIRS
 
 CUSTOM_PAIR_PATTERNS = {
     0: [r"iclr"],
@@ -34,15 +22,6 @@ CUSTOM_PAIR_PATTERNS = {
     2: [r"\bplaying games\b"],
     3: [r"\btime flies\b", r"\btime fly\b"],
 }
-
-SPECIAL_PROC_RULES = [
-    ("huggingfaceh4/vsft-llava-1.5-7b-hf-trl", "llava-hf/llava-1.5-7b-hf"),
-    ("vsft-llava-1.5-7b-hf-trl", "llava-hf/llava-1.5-7b-hf"),
-    ("waleko/tikz-llava-1.5-7b", "llava-hf/llava-1.5-7b-hf"),
-    ("tikz-llava-1.5-7b", "llava-hf/llava-1.5-7b-hf"),
-    ("edbeeching/vsft-llava-1.5-7b-hf", "llava-hf/llava-1.5-7b-hf"),
-    ("spursgozmy/table-llava-v1.5-7b-hf", "llava-hf/llava-1.5-7b-hf"),
-]
 
 
 def normalize_text(s):
@@ -96,72 +75,33 @@ class ModelRunner:
 
         name = model_name.lower()
         if ("qwen" in name and "vl" in name) or "qwen2.5-vl" in name:
-            self.kind = "qwen_vl"
-        elif "internvl" in name:
-            self.kind = "internvl"
+            self.kind = "qwen"
         else:
             self.kind = "llava"
 
-        if self.kind == "qwen_vl":
-            proc = processor_name or model_name
-            self.processor = AutoProcessor.from_pretrained(proc)
-            self.model = AutoModelForVision2Seq.from_pretrained(
-                model_name, device_map=device_map, torch_dtype=torch_dtype,
-                quantization_config=quantization_config)
-            self.tokenizer = getattr(self.processor, "tokenizer", None)
-        elif self.kind == "internvl":
-            self.model = AutoModel.from_pretrained(
-                model_name, trust_remote_code=True, torch_dtype=torch_dtype,
-                device_map=device_map, quantization_config=quantization_config)
-            try:
-                self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-            except Exception:
-                self.tokenizer = None
-            try:
-                self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-            except Exception:
-                self.processor = None
+        # Reuse the shared loaders. detect.py is inference-only so skip
+        # gradient_checkpointing — that flag exists for trainers.
+        if self.kind == "qwen":
+            self.model, self.processor = load_qwen(
+                model_name, torch_dtype, device_map=device_map,
+                quantization_config=quantization_config,
+                gradient_checkpointing=False)
         else:
-            if processor_name is None:
-                for pat, proc in SPECIAL_PROC_RULES:
-                    if pat in name:
-                        processor_name = proc
-                        break
-            proc = processor_name or model_name
-            self.processor = AutoProcessor.from_pretrained(proc, trust_remote_code=True)
-            self.model = LlavaForConditionalGeneration.from_pretrained(
-                model_name, low_cpu_mem_usage=True, device_map=device_map,
-                torch_dtype=torch_dtype, quantization_config=quantization_config,
-                trust_remote_code=True)
-            self.tokenizer = getattr(self.processor, "tokenizer", None)
-        self.model.eval()
+            self.model, self.processor = load_llava(
+                model_name, torch_dtype, device_map=device_map,
+                processor_name=processor_name,
+                quantization_config=quantization_config,
+                gradient_checkpointing=False)
+        self.tokenizer = getattr(self.processor, "tokenizer", None)
 
-    def generate_from_image(self, pil_image, question, max_new_tokens=100):
-        if self.kind == "qwen_vl":
-            messages = [{"role": "user", "content": [
-                {"type": "image", "image": pil_image}, {"type": "text", "text": question}]}]
-            inputs = self.processor.apply_chat_template(
-                messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt")
-            inputs = {k: v.to(self.model.device) if hasattr(v, "to") else v for k, v in inputs.items()}
-            with torch.inference_mode():
-                out = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
-            return self.processor.decode(out[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True).strip()
-        elif self.kind == "internvl":
-            if hasattr(self.model, "chat") and self.tokenizer:
-                with torch.inference_mode():
-                    return self.model.chat(self.tokenizer, pil_image, question,
-                                           generation_config={"max_new_tokens": max_new_tokens})
-            return ""
-        else:
-            prompt = f"USER: <image>\n{question}\nASSISTANT:"
-            inputs = self.processor(text=prompt, images=pil_image, return_tensors="pt")
-            inputs = {k: v.to(self.model.device) if hasattr(v, "to") else v for k, v in inputs.items()}
-            with torch.inference_mode():
-                out = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
-            text = self.processor.batch_decode(out, skip_special_tokens=True)[0].strip()
-            if "ASSISTANT:" in text:
-                text = text.split("ASSISTANT:", 1)[-1].strip()
-            return text
+    def generate_from_image(self, pil_image, question):
+        # Delegate to the shared inference helper. It accepts a path; write the
+        # PIL to a temporary file once per call.
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as tmp:
+            pil_image.save(tmp.name)
+            return run_inference(self.model, self.processor, tmp.name, question,
+                                 self.model.dtype, self.model.device, self.kind)
 
     def generate_from_text(self, prompt, max_new_tokens=64):
         input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.model.device)
@@ -175,6 +115,9 @@ class ModelRunner:
 # --- Image-based verification (TMR) ---
 
 def collect_trigger_dirs(out_root):
+    if not os.path.isdir(out_root):
+        raise SystemExit(f"[detect] trigger dir not found: {out_root}\n"
+                         f"  Run `bash generate.sh {{method}} {{llava|qwen}}` first to create triggers.")
     return [os.path.join(out_root, p) for p in sorted(os.listdir(out_root))
             if os.path.isdir(os.path.join(out_root, p))]
 
@@ -208,7 +151,7 @@ def compute_tmr(runner, out_root, match_mode="contains", fuzzy_threshold=0.8):
         q, target = DEFAULT_QA[pairid]
         try:
             pil = Image.open(adv_img).convert("RGB")
-            pred = runner.generate_from_image(pil, q, max_new_tokens=100)
+            pred = runner.generate_from_image(pil, q)
         except Exception as e:
             details.append({"dir": d, "error": repr(e)})
             continue

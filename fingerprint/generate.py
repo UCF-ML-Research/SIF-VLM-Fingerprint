@@ -3,7 +3,7 @@ import json
 import argparse
 from PIL import Image
 import torch
-from utils import QA_PAIRS, parse_float_expr, set_seed, get_device, save_rgb, load_llava, load_qwen, run_inference_llava, run_inference_qwen
+from utils import QA_PAIRS, parse_float_expr, set_seed, get_device, save_rgb, load_llava, load_qwen, run_inference
 from core.pla import PLA
 from core.ordinary import Ordinary
 from core.rna import RNA
@@ -16,23 +16,35 @@ METHODS = ["pla", "ordinary", "rna", "cropa", "difgsm", "proflingo", "instructio
 
 
 def load_model_for_proflingo(model_name, dtype):
-    from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor
+    from transformers import AutoModelForCausalLM, AutoTokenizer, AutoProcessor, AutoConfig
     try:
         from transformers import LlavaForConditionalGeneration
     except ImportError:
         LlavaForConditionalGeneration = None
 
     lower = model_name.lower()
+    # Detect multimodal Qwen via config (handles Qwen3.5-9B which has no "vl" in name
+    # but is a VLM with image_token_id set).
+    is_qwen_vl = False
+    if "qwen" in lower:
+        try:
+            cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+            mt = (getattr(cfg, "model_type", "") or "").lower()
+            is_qwen_vl = (
+                "vl" in lower
+                or mt in {"qwen2_vl", "qwen2_5_vl", "qwen3_vl", "qwen3_5"}
+                or getattr(cfg, "image_token_id", None) is not None
+            )
+        except Exception:
+            is_qwen_vl = "vl" in lower
+
     if "llava" in lower:
         model = LlavaForConditionalGeneration.from_pretrained(
             model_name, torch_dtype=dtype, low_cpu_mem_usage=True, device_map="auto")
         tokenizer = AutoProcessor.from_pretrained(model_name, trust_remote_code=True).tokenizer
-    elif "qwen" in lower and "vl" in lower:
-        try:
-            from transformers import AutoModelForVision2Seq
-        except ImportError:
-            from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
-        model = AutoModelForVision2Seq.from_pretrained(
+    elif is_qwen_vl:
+        from transformers import AutoModelForImageTextToText
+        model = AutoModelForImageTextToText.from_pretrained(
             model_name, torch_dtype=dtype, low_cpu_mem_usage=True,
             device_map="auto", trust_remote_code=True)
         tokenizer = AutoProcessor.from_pretrained(model_name, trust_remote_code=True).tokenizer
@@ -126,10 +138,8 @@ def run_image_attack(args, dtype_model):
             save_rgb(adv_rgb, adv_path)
             torch.save(adv_rgb.detach().cpu(), os.path.join(out_dir, "adv_pixel_vis.pt"))
 
-            if args.model_type == "llava":
-                model_output = run_inference_llava(model, processor, adv_path, question, dtype_model, device)
-            else:
-                model_output = run_inference_qwen(model, processor, adv_path, question, dtype_model, device)
+            model_output = run_inference(model, processor, adv_path, question,
+                                         dtype_model, device, args.model_type)
 
             record = {
                 "original_image": img_path, "adv_image": adv_path,

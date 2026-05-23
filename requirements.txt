@@ -1,26 +1,32 @@
-torch==2.3.1+cu121
-torchvision==0.18.1+cu121
-torchaudio==2.3.1+cu121
+# Install both envs (sif + sif-qwen) via:  bash install.sh
+# Or one at a time:                         bash install.sh sif
+#                                           bash install.sh sif-qwen
+
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
 --extra-index-url https://download.pytorch.org/whl/cu121
 
-transformers
-accelerate
-sentencepiece
-einops
-tokenizers
-bitsandbytes
-numpy
-scipy
-pillow
-opencv-python
-tqdm
-pyyaml
-matplotlib
-scikit-image
-scikit-learn
-regex
-requests
-safetensors
-huggingface-hub
+transformers==4.49.0
+tokenizers==0.21.4
+accelerate==0.34.2
+huggingface_hub==0.36.2
+hf-xet==1.5.0
+safetensors==0.7.0
+sentencepiece==0.2.1
+einops==0.8.2
+bitsandbytes==0.49.2
+qwen-vl-utils==0.0.8
 
-openai
+numpy==1.26.4
+scipy==1.15.3
+pillow==12.2.0
+tqdm==4.67.3
+PyYAML==6.0.3
+regex==2026.5.9
+requests==2.34.1
+
+peft==0.19.1
+pandas==2.3.3
+sentence-transformers==5.2.3
+openai==2.37.0
+vllm==0.6.6

@@ -1,6 +1,6 @@
 # SIF: Semantically In-Distribution Fingerprints for Large Vision-Language Models
 
-This is the official implementation of the paper [SIF: Semantically In-Distribution Fingerprints for Large Vision-Language Models], which has been accepted to CVPR 2026.
+This is the official implementation of the paper [SIF: Semantically In-Distribution Fingerprints for Large Vision-Language Models](https://arxiv.org/abs/2604.17041), which has been accepted to CVPR 2026.
 
 ### TL;DR
 
@@ -11,21 +11,21 @@ Existing fingerprinting methods for Large Vision-Language Models (LVLMs) rely on
 ### Setup
 
 ```bash
-conda create -n sif python=3.11 && conda activate sif
-pip install -r requirements.txt
+bash install.sh
 ```
 
 ### Code Structure
 
 ```
 sif/                              # SIF method (ours)
-├── sif.py, detect.py, analyze.py # Generation, detection, analysis
-├── generate.sh, fingerprint.sh   # bash {generate|fingerprint}.sh {llava|qwen}
+├── sif.py, detect.py             # Generate triggers, verify on source/suspect/unrelated
+├── utils.py                      # Shared utilities
+├── generate.sh, detect.sh        # bash {generate|detect}.sh {llava|qwen}
 └── watermarks/kgw/               # KGW text watermark scheme
 
 fingerprint/                      # Baselines (7 methods)
 ├── generate.py, detect.py        # Unified generation & verification CLI
-├── generate.sh, fingerprint.sh   # bash generate.sh {method} {llava|qwen}
+├── generate.sh, detect.sh        # bash {generate|detect}.sh {method} {llava|qwen}
 └── core/                         # pla, ordinary, rna, cropa, difgsm, proflingo/, instruction_fingerprint/
 
 stealthiness/                     # Stealthiness evaluation (PPL, divergence, GPT judge)
@@ -35,8 +35,8 @@ imagenet/                         # Source images
 ### SIF
 
 ```bash
-bash sif/generate.sh llava          # Generate fingerprints
-bash sif/fingerprint.sh llava       # Detect + analyze on suspect models
+bash sif/generate.sh llava     # Generate fingerprint triggers (SAFD + RFO)
+bash sif/detect.sh llava            # Verify across the LLaVA suspect/unrelated roster
 ```
 
 ### Baselines
@@ -51,7 +51,7 @@ bash sif/fingerprint.sh llava       # Detect + analyze on suspect models
 | ProFLingo | Text (suffix optim) | `bash generate.sh proflingo llava` |
 | Instruction FP | Training (LoRA) | `bash generate.sh instruction_fingerprint llava` |
 
-Replace `llava` with `qwen` for Qwen2.5-VL-7B. All commands run from `fingerprint/`.
+Replace `llava` with `qwen` for Qwen2.5-VL-7B. All commands run from `fingerprint/`. Verify any method with `bash detect.sh {method} {llava|qwen}`.
 
 ### Stealthiness Evaluation
 

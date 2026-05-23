@@ -1,8 +1,12 @@
 #!/bin/bash
-# Usage: bash generate.sh {pla|ordinary|rna|cropa|difgsm} {llava|qwen}
-#        bash generate.sh proflingo {llava|qwen}
+# Usage: bash generate.sh {pla|ordinary|rna|cropa|difgsm|proflingo|instruction_fingerprint} {llava|qwen}
 set -e
 cd "$(cd "$(dirname "$0")" && pwd)"
+
+# Auto-activate sif env (LLaVA-1.5 source needs transformers 4.49)
+if command -v conda >/dev/null 2>&1 && conda env list | awk '{print $1}' | grep -qx sif; then
+    eval "$(conda shell.bash hook)"; conda activate sif
+fi
 
 METHOD="$1"
 TARGET="$2"
@@ -14,7 +18,7 @@ if [ "$METHOD" = "proflingo" ] || [ "$METHOD" = "instruction_fingerprint" ]; the
     case "$TARGET" in
     llava)  MODEL="llava-hf/llava-1.5-7b-hf" ;;
     qwen)   MODEL="Qwen/Qwen2.5-VL-7B-Instruct" ;;
-    *)      echo "Usage: bash generate.sh {METHOD} {llava|qwen}"; exit 1 ;;
+    *)      echo "Usage: bash generate.sh {pla|ordinary|rna|cropa|difgsm|proflingo|instruction_fingerprint} {llava|qwen}"; exit 1 ;;
     esac
 
     if [ "$METHOD" = "proflingo" ]; then
@@ -63,18 +67,18 @@ qwen)
     INPUT_DIR="../imagenet/images_qwen"
     ;;
 *)
-    echo "Usage: bash generate.sh {pla|ordinary|rna|cropa|difgsm|proflingo} {llava|qwen}"
+    echo "Usage: bash generate.sh {pla|ordinary|rna|cropa|difgsm|proflingo|instruction_fingerprint} {llava|qwen}"
     exit 1
     ;;
 esac
 
 case "$METHOD" in
-pla)      OUT_DIR="./fingerprints/pla_fingerprint/${TARGET}_pla";      EXTRA="--beta $BETA --clip_th $CLIP_TH" ;;
-ordinary) OUT_DIR="./fingerprints/pla_fingerprint/${TARGET}_ordinary";  EXTRA="" ;;
-rna)      OUT_DIR="./fingerprints/pla_fingerprint/${TARGET}_rna";      EXTRA="--lam $LAM" ;;
-cropa)    OUT_DIR="./fingerprints/pla_fingerprint/${TARGET}_cropa";    EXTRA="--alpha2 $ALPHA2 --cropa_end $CROPA_END" ;;
-difgsm)   OUT_DIR="./fingerprints/pla_fingerprint/${TARGET}_difgsm";   EXTRA="--momentum $MOMENTUM --di_prob $DI_PROB --di_resize_range $DI_RESIZE" ;;
-*)        echo "Usage: bash generate.sh {pla|ordinary|rna|cropa|difgsm|proflingo} {llava|qwen}"; exit 1 ;;
+pla)      OUT_DIR="./fingerprints/pla_fingerprint/${TARGET}_pla";           EXTRA="--beta $BETA --clip_th $CLIP_TH" ;;
+ordinary) OUT_DIR="./fingerprints/ordinary_fingerprint/${TARGET}_ordinary"; EXTRA="" ;;
+rna)      OUT_DIR="./fingerprints/rna_fingerprint/${TARGET}_rna";           EXTRA="--lam $LAM" ;;
+cropa)    OUT_DIR="./fingerprints/cropa_fingerprint/${TARGET}_cropa";       EXTRA="--alpha2 $ALPHA2 --cropa_end $CROPA_END" ;;
+difgsm)   OUT_DIR="./fingerprints/difgsm_fingerprint/${TARGET}_difgsm";     EXTRA="--momentum $MOMENTUM --di_prob $DI_PROB --di_resize_range $DI_RESIZE" ;;
+*)        echo "Usage: bash generate.sh {pla|ordinary|rna|cropa|difgsm|proflingo|instruction_fingerprint} {llava|qwen}"; exit 1 ;;
 esac
 
 CUDA_VISIBLE_DEVICES=0 python generate.py \

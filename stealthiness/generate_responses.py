@@ -15,9 +15,7 @@ Usage:
   python generate_responses.py --model OpenGVLab/InternVL3_5-1B-Instruct \
     --num_samples 1000 --tp 1 --out_json results/responses_internvl.json
 
-Requires the vllm conda environment:
-  LD_LIBRARY_PATH=/home/yifei/conda/envs/vllm/lib:$LD_LIBRARY_PATH \\
-    /home/yifei/conda/envs/vllm/bin/python generate_responses.py ...
+Run inside the `sif` conda env (vLLM is installed by install.sh).
 """
 import os, json, argparse, re
 from PIL import Image

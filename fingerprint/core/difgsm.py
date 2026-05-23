@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torchvision.transforms import ToTensor
 from tqdm import trange
-from utils import DiffLLaVAPreprocess, DiffQwen2VLFast
+from utils import DiffLLaVAPreprocess, make_qwen_diff_preprocess
 
 
 class DIFGSM:
@@ -102,11 +102,14 @@ class DIFGSM:
 
         input_ids = full_inputs["input_ids"]
         attention_mask = full_inputs["attention_mask"]
+        # Qwen3-VL needs mm_token_type_ids for M-RoPE; older Qwen2/2.5-VL don't return it.
+        mm_token_type_ids = full_inputs.get("mm_token_type_ids", None)
         prompt_len = prompt_inputs["input_ids"].shape[1]
         labels = input_ids.clone()
         labels[:, :prompt_len] = -100
 
-        pre = DiffQwen2VLFast(self.processor, pil, device=self.device)
+        pre = make_qwen_diff_preprocess(self.processor, pil, device=self.device,
+                                        model_type=getattr(self.model.config, "model_type", None))
         use_amp = torch.cuda.is_available() and self.dtype_model in (torch.float16, torch.bfloat16)
         grad_accum = torch.zeros_like(rgb)
 
@@ -117,10 +120,13 @@ class DIFGSM:
 
             rgb_div = self._input_diversity(rgb, base_size, resize_range, prob)
             tok, grid = pre(rgb_div)
+            fwd_kwargs = dict(input_ids=input_ids, attention_mask=attention_mask,
+                              pixel_values=tok.to(self.dtype_model),
+                              image_grid_thw=grid, labels=labels)
+            if mm_token_type_ids is not None:
+                fwd_kwargs["mm_token_type_ids"] = mm_token_type_ids
             with torch.cuda.amp.autocast(enabled=use_amp, dtype=self.dtype_model if use_amp else None):
-                loss = self.model(input_ids=input_ids, attention_mask=attention_mask,
-                                  pixel_values=tok.to(self.dtype_model),
-                                  image_grid_thw=grid, labels=labels).loss
+                loss = self.model(**fwd_kwargs).loss
 
             if not torch.isfinite(loss):
                 break
