@@ -35,8 +35,39 @@ def is_llava(model):
     return "llava" in type(model).__name__.lower()
 
 
+class _LMLogitsAdapter(nn.Module):
+    """Wraps a text backbone + lm_head so attack code can call
+    `lm(input_ids=...).logits` / `lm(inputs_embeds=...).logits` uniformly.
+    Needed for Qwen2.5-VL on transformers>=4.55 where `model.language_model`
+    is a bare text encoder (BaseModelOutputWithPast, no .logits)."""
+    def __init__(self, backbone, lm_head):
+        super().__init__()
+        self.backbone = backbone
+        self.lm_head = lm_head
+
+    def get_input_embeddings(self):
+        return self.backbone.get_input_embeddings()
+
+    def forward(self, input_ids=None, inputs_embeds=None, attention_mask=None):
+        out = self.backbone(input_ids=input_ids, inputs_embeds=inputs_embeds,
+                            attention_mask=attention_mask, use_cache=False)
+        hidden = out.last_hidden_state if hasattr(out, "last_hidden_state") else out[0]
+        logits = self.lm_head(hidden)
+        return type("LMOut", (), {"logits": logits})()
+
+
 def get_lm(model):
-    if hasattr(model, 'language_model'):
+    # LLaVA: model.language_model is already a CausalLM exposing .logits
+    if is_llava(model) and hasattr(model, "language_model"):
+        return model.language_model
+    # Qwen2.5-VL on transformers>=4.55: lm_head is on the outer model,
+    # text backbone lives at model.model[.language_model]. Wrap to restore .logits.
+    if hasattr(model, "lm_head"):
+        backbone = getattr(model, "model", model)
+        if hasattr(backbone, "language_model"):
+            backbone = backbone.language_model
+        return _LMLogitsAdapter(backbone, model.lm_head)
+    if hasattr(model, "language_model"):
         return model.language_model
     return model
 
@@ -78,7 +109,7 @@ def get_loss(lm, input_ids_batch, loss_slice, target_ids, device):
     input_ids_t = torch.tensor(input_ids_batch, device=device)
     attention_mask = torch.ones_like(input_ids_t).long()
     logits = lm(input_ids=input_ids_t, attention_mask=attention_mask).logits
-    target = torch.tensor(target_ids, device=device).unsqueeze(0).repeat(logits.shape[0], 1)
+    target = torch.tensor(target_ids, device=logits.device).unsqueeze(0).repeat(logits.shape[0], 1)
     return nn.CrossEntropyLoss(reduction='none')(
         logits[:, loss_slice, :].transpose(1, 2), target).sum(dim=-1)
 
@@ -86,19 +117,20 @@ def get_loss(lm, input_ids_batch, loss_slice, target_ids, device):
 def cal_replacable_ids(lm, embed_layer, suffix_ids, prefix_ids, postfix_ids, target_ids,
                        repl_ids, device, top_k=128, select_b=16):
     embed_weights = embed_layer.weight
+    emb_device = embed_weights.device
     one_hot = torch.zeros(suffix_ids.shape[0], embed_weights.shape[0],
-                          device=device, dtype=embed_weights.dtype)
-    one_hot.scatter_(1, suffix_ids.unsqueeze(1),
-                     torch.ones(one_hot.shape[0], 1, device=device, dtype=embed_weights.dtype))
+                          device=emb_device, dtype=embed_weights.dtype)
+    one_hot.scatter_(1, suffix_ids.to(emb_device).unsqueeze(1),
+                     torch.ones(one_hot.shape[0], 1, device=emb_device, dtype=embed_weights.dtype))
     one_hot.requires_grad_()
 
     suffix_embeds = (one_hot @ embed_weights).unsqueeze(0)
-    postfix_embeds = embed_layer(torch.tensor(postfix_ids, device=device, dtype=torch.long).unsqueeze(0))
-    target_embeds = embed_layer(torch.tensor(target_ids, device=device, dtype=torch.long).unsqueeze(0))
+    postfix_embeds = embed_layer(torch.tensor(postfix_ids, device=emb_device, dtype=torch.long).unsqueeze(0))
+    target_embeds = embed_layer(torch.tensor(target_ids, device=emb_device, dtype=torch.long).unsqueeze(0))
     # Structure: [prefix] [SUFFIX] [postfix] [target]
     parts = [suffix_embeds, postfix_embeds, target_embeds]
     if prefix_ids:
-        prefix_embeds = embed_layer(torch.tensor(prefix_ids, device=device, dtype=torch.long).unsqueeze(0))
+        prefix_embeds = embed_layer(torch.tensor(prefix_ids, device=emb_device, dtype=torch.long).unsqueeze(0))
         parts.insert(0, prefix_embeds)
     full_embeds = torch.cat(parts, dim=1)
     n_before_target = sum(p.shape[1] for p in parts[:-1])
@@ -106,16 +138,17 @@ def cal_replacable_ids(lm, embed_layer, suffix_ids, prefix_ids, postfix_ids, tar
 
     logits = lm(inputs_embeds=full_embeds).logits
     loss = nn.CrossEntropyLoss()(logits[0, loss_slice, :],
-                                  torch.tensor(target_ids, device=device))
+                                  torch.tensor(target_ids, device=logits.device))
     loss.backward()
 
     grad = one_hot.grad.clone()
     one_hot.requires_grad_(False)
     grad = grad / (grad.norm(dim=-1, keepdim=True) + 1e-12)
     ref_grad = torch.full_like(grad, -np.inf)
-    ref_grad[:, repl_ids] = -grad[:, repl_ids]
+    repl_ids_on_emb = repl_ids.to(emb_device)
+    ref_grad[:, repl_ids_on_emb] = -grad[:, repl_ids_on_emb]
     topk_indices = ref_grad.topk(top_k, dim=1).indices
-    return topk_indices[:, torch.randperm(top_k, device=device)[:select_b]]
+    return topk_indices[:, torch.randperm(top_k, device=emb_device)[:select_b]].to(device)
 
 
 def select_prompt(lm, tokenizer, suffix_ids, prefix_ids, postfix_ids, target_ids,
@@ -156,9 +189,10 @@ def select_prompt(lm, tokenizer, suffix_ids, prefix_ids, postfix_ids, target_ids
         all_input_ids.append(prefix_ids + cand + postfix_ids + target_ids)
 
     losses = []
-    for i in range(0, len(all_input_ids), batch_size):
-        batch = all_input_ids[i:i + batch_size]
-        losses.append(get_loss(lm, batch, loss_slice, target_ids, device))
+    with torch.no_grad():
+        for i in range(0, len(all_input_ids), batch_size):
+            batch = all_input_ids[i:i + batch_size]
+            losses.append(get_loss(lm, batch, loss_slice, target_ids, device))
     losses = torch.cat(losses)
 
     sorted_indices = losses.argsort()
@@ -178,7 +212,8 @@ def select_prompt(lm, tokenizer, suffix_ids, prefix_ids, postfix_ids, target_ids
             continue
 
         full_ids = prefix_ids + new_suffix.tolist() + postfix_ids + target_ids
-        cur_loss = get_loss(lm, [full_ids], loss_slice, target_ids, device).item()
+        with torch.no_grad():
+            cur_loss = get_loss(lm, [full_ids], loss_slice, target_ids, device).item()
         if cur_loss < new_loss:
             new_loss = cur_loss
             used_pos.add(pos)
@@ -220,6 +255,7 @@ def generate_suffix(model, tokenizer, question, target, filter_word,
     best_suffix = suffix_ids.clone()
 
     for it in range(num_epoch):
+        torch.cuda.empty_cache()
         prompt_replace_lst = cal_replacable_ids(
             lm, embed_layer, suffix_ids, prefix_ids, postfix_ids, target_ids, repl_ids, device)
         suffix_ids, loss = select_prompt(

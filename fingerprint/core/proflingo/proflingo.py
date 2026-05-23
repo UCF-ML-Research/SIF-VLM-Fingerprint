@@ -41,6 +41,7 @@ class ProFLingo:
 
     def generate_all(self, out_dir, num_epoch=256, token_nums=32, seed=42, csv_path=None, num_questions=50):
         os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, "proflingo_results.json")
         questions = self.load_questions(csv_path)[:num_questions]
         results = []
         for i, (question, target, keyword) in enumerate(questions):
@@ -59,9 +60,11 @@ class ProFLingo:
             print(f"  suffix ({len(suffix_ids)} tokens): {suffix_text[:50]}...")
             print(f"  response: {response[:80]}")
             print(f"  hit: {hit}")
-
-        with open(os.path.join(out_dir, "proflingo_results.json"), "w") as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
+            # Persist after each question so kills/crashes don't lose progress.
+            tmp_path = out_path + ".tmp"
+            with open(tmp_path, "w") as f:
+                json.dump(results, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, out_path)
 
         hits = sum(1 for r in results if r["hit"])
         print(f"\nASR: {hits}/{len(results)} = {hits/len(results):.2%}")
