@@ -22,19 +22,19 @@ if [ "$METHOD" = "proflingo" ] || [ "$METHOD" = "instruction_fingerprint" ]; the
     esac
 
     if [ "$METHOD" = "proflingo" ]; then
-        CUDA_VISIBLE_DEVICES=0 python generate.py \
+        CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} python generate.py \
           --method proflingo \
           --model_name "$MODEL" \
           --out_dir "./fingerprints/proflingo_fingerprint/${TARGET}_proflingo" \
           --seed $SEED --dtype $DTYPE \
           --num_epoch 64 --token_nums 32 --num_questions 50
     else
-        CUDA_VISIBLE_DEVICES=0 python generate.py \
+        CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} python generate.py \
           --method instruction_fingerprint \
           --model_name "$MODEL" \
           --out_dir "./fingerprints/instruction_fingerprint/${TARGET}_if" \
           --seed $SEED --dtype $DTYPE \
-          --num_fingerprint 10 --if_epochs 20 --if_lr 1e-2 \
+          --num_fingerprint 10 --if_epochs 20 --if_lr 1e-3 \
           --if_inner_dim 16 --if_batch_size 1
     fi
     exit 0
@@ -81,7 +81,7 @@ difgsm)   OUT_DIR="./fingerprints/difgsm_fingerprint/${TARGET}_difgsm";     EXTR
 *)        echo "Usage: bash generate.sh {pla|ordinary|rna|cropa|difgsm|proflingo|instruction_fingerprint} {llava|qwen}"; exit 1 ;;
 esac
 
-CUDA_VISIBLE_DEVICES=0 python generate.py \
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} python generate.py \
   --method "$METHOD" \
   --model_name "$MODEL" \
   --model_type "$MODEL_TYPE" \

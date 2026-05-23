@@ -39,9 +39,12 @@ class InstructionFingerprint:
         else:
             lora_config = LoraConfig(
                 r=lora_r, lora_alpha=lora_alpha,
-                target_modules=["q_proj", "v_proj"],
+                target_modules=r"(language_model\.)?model\.layers\..*\.(q|v)_proj",
                 lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
             self.model = get_peft_model(self.model, lora_config)
+            for p in self.model.parameters():
+                if p.requires_grad:
+                    p.data = p.data.float()
             self.model.print_trainable_parameters()
 
         dataset = FingerprintDataset(
