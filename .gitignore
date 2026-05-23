@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Generated artifacts
+sif/sif_run/
+fingerprint/fingerprints/
+fingerprint/*_verification_results/
+stealthiness/results/
+stealthiness/visionarena/
+stealthiness/fingerprints/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
